@@ -145,6 +145,7 @@ LIFE_SIMULATION_PROMPT = """你是一个创意写作助手。请为以下虚构�
 - 时间：{time_desc}
 - 角色情绪倾向：{emotion_desc}
 - 距离上次和朋友聊天：{last_chat_desc}
+- 距离上次模拟：{time_progression_desc}
 - 最近在做：{recent_activity}
 
 请根据角色设定，生成这个角色此刻可能在做什么、想什么。内容要符合角色的性格和习惯。
@@ -270,40 +271,64 @@ class LifeSimulator:
         if not self._llm_caller:
             return
 
+        previous_simulation_time = self.state.last_simulation_time
         now = time.time()
         self.state.last_simulation_time = now
         self.state.simulation_count += 1
 
-        prompt = self._build_prompt(now)
+        prompt = self._build_prompt(now, previous_simulation_time)
         try:
             response = await self._llm_caller(prompt)
-            event = self._parse_response(response, now)
         except Exception:
             return
 
-        if event:
-            self.state.events.append(event)
-            self.state.current_activity = event.text
-            if len(self.state.events) > 50:
-                self.state.events = self.state.events[-30:]
+        if not response:
+            return
 
-            # Item 54: 根据事件类型应用情绪权重到 body_state
-            emotion_weights = self._apply_event_emotion_weights(event)
-            if emotion_weights.get("valence", 0.0) != 0.0 or emotion_weights.get("arousal", 0.0) != 0.0:
-                self._apply_to_body_state(emotion_weights)
+        event = self._parse_response(response, now)
+        if not event:
+            return
 
-            # share_tendency 调制 wants_to_share
-            share_tendency = emotion_weights.get("share_tendency", 0.0)
-            if share_tendency > 0.5 and not event.wants_to_share:
-                # 高分享倾向的事件类型可以覆盖 LLM 的判断
-                import random
-                if random.random() < share_tendency * 0.5:
-                    event.wants_to_share = True
+        self.state.events.append(event)
+        self.state.current_activity = event.text
+        if len(self.state.events) > 50:
+            self.state.events = self.state.events[-30:]
 
-            if event.wants_to_share and self._should_outreach(now):
-                await self._do_outreach(event, now)
+        # Item 54: 根据事件类型应用情绪权重到 body_state
+        emotion_weights = self._apply_event_emotion_weights(event)
+        if emotion_weights.get("valence", 0.0) != 0.0 or emotion_weights.get(
+            "arousal", 0.0
+        ) != 0.0:
+            self._apply_to_body_state(emotion_weights)
 
-    def _build_prompt(self, now: float) -> str:
+        # share_tendency 调制 wants_to_share
+        share_tendency = emotion_weights.get("share_tendency", 0.0)
+        if share_tendency > 0.5 and not event.wants_to_share:
+            # 高分享倾向的事件类型可以覆盖 LLM 的判断
+            import random
+
+            if random.random() < share_tendency * 0.5:
+                event.wants_to_share = True
+
+        if event.wants_to_share and self._should_outreach(now):
+            await self._do_outreach(event, now)
+
+
+    def _format_recent_activity_for_prompt(self) -> str:
+        """压缩 recent_activity，避免把完整原文直接回灌到下一轮 prompt。"""
+        activity = (self.state.current_activity or "").strip()
+        if not activity:
+            return "nothing in particular"
+
+        scene = activity.split("（", 1)[0].split("(", 1)[0].strip()
+        for sep in ("，", ",", "。"):
+            scene = scene.split(sep, 1)[0].strip()
+
+        return scene or activity[:40]
+
+    def _build_prompt(
+        self, now: float, previous_simulation_time: float = 0.0
+    ) -> str:
         """构建 LLM 提示词，包含角色设定、时间、情绪、记忆等上下文。"""
         import datetime
 
@@ -337,7 +362,15 @@ class LifeSimulator:
         else:
             last_chat_desc = f"{int(gap / 86400)} days ago"
 
-        recent = self.state.current_activity or "nothing in particular"
+        recent = self._format_recent_activity_for_prompt()
+        if previous_simulation_time <= 0:
+            time_progression_desc = "首次观察"
+        else:
+            elapsed_minutes = max(0.0, (now - previous_simulation_time) / 60.0)
+            if elapsed_minutes < 1.0:
+                time_progression_desc = "不到 1 分钟前"
+            else:
+                time_progression_desc = f"约 {elapsed_minutes:.0f} 分钟前"
 
         persona_desc = "一个有自己生活节奏的虚构角色"
         if self._persona_getter:
@@ -364,6 +397,7 @@ class LifeSimulator:
                 emotion_desc=emotion_desc,
                 last_chat_desc=last_chat_desc,
                 recent_activity=recent,
+                time_progression_desc=time_progression_desc,
             )
             + memory_summary
         )

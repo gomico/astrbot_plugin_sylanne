@@ -1314,7 +1314,7 @@ class StatePersistence:
             tasks.clear()
         elif isinstance(tasks, list):
             tasks.clear()
-        p._background_tasks = []
+        p._background_tasks = set()
         # Save final checkpoints for background post queues
         bg_queues = p._background_post_queues
         checkpoint_enabled = bool(

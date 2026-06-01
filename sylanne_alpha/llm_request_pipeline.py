@@ -437,7 +437,10 @@ class LLMRequestPipeline:
         return best_key
 
     def _cache_system_prompt(
-        self, request: Any, session_key: str, raw_system_prompt: str | None = None
+        self,
+        request: Any,
+        session_key: str = "",
+        raw_system_prompt: str | None = None,
     ) -> None:
         """按 session 缓存最近一次非空 system prompt，供生命模拟器复用。
 
@@ -674,7 +677,7 @@ class LLMRequestPipeline:
         if not hasattr(p, "_unfinished_replies"):
             p._unfinished_replies = {}
         if not hasattr(p, "_background_tasks"):
-            p._background_tasks = []
+            p._background_tasks = set()
         if not hasattr(p, "_last_request_budgets"):
             p._last_request_budgets = {}
         if not hasattr(p, "_fragment_buffers"):
@@ -688,7 +691,7 @@ class LLMRequestPipeline:
             loop = asyncio.get_running_loop()
             t1 = loop.create_task(self._session_idle_check_loop())
             t2 = loop.create_task(self._consolidation_loop())
-            p._background_tasks.extend([t1, t2])
+            p._background_tasks.update([t1, t2])
         session_key = p._session_key(event)
         # 维护 session_key → unified_msg_origin 映射，供主动发送时使用
         umo = str(getattr(event, "unified_msg_origin", "") or "")
@@ -829,13 +832,10 @@ class LLMRequestPipeline:
                     _process_after_delay(), name="fragment_debounce"
                 )
                 p._fragment_timers[session_key] = timer
-                p._background_tasks.append(timer)
+                p._background_tasks.add(timer)
 
                 def _cleanup_task(t, tasks=p._background_tasks):
-                    try:
-                        tasks.remove(t)
-                    except ValueError:
-                        pass
+                    tasks.discard(t)
 
                 timer.add_done_callback(_cleanup_task)
                 return  # 暂不处理，等待防抖定时器触发
@@ -964,12 +964,8 @@ class LLMRequestPipeline:
             _observe_task = safe_ensure_future(
                 _locked_observe(), name="locked_observe"
             )
-            p._background_tasks.append(_observe_task)
-            _observe_task.add_done_callback(
-                lambda t: (
-                    p._background_tasks.remove(t) if t in p._background_tasks else None
-                )
-            )
+            p._background_tasks.add(_observe_task)
+            _observe_task.add_done_callback(lambda t: p._background_tasks.discard(t))
             # 等待最多 200ms，让 spine tick 完成后再读取状态
             _observe_wait_ms = int(
                 (p.config or {}).get("state_injection_observe_wait_ms", 200)
@@ -1014,13 +1010,9 @@ class LLMRequestPipeline:
                                     p._send_first_sentence(origin, first_sentence),
                                     name="stream_send_first_sentence",
                                 )
-                                p._background_tasks.append(t)
+                                p._background_tasks.add(t)
                                 t.add_done_callback(
-                                    lambda tt: (
-                                        p._background_tasks.remove(tt)
-                                        if tt in p._background_tasks
-                                        else None
-                                    )
+                                    lambda tt: p._background_tasks.discard(tt)
                                 )
 
                 await original_send_streaming(
@@ -2190,8 +2182,14 @@ class LLMRequestPipeline:
         if provider is None:
             return ""
         try:
-            resp = await provider.text_chat(prompt=prompt)
+            resp = await provider.text_chat(prompt=prompt, temperature=0.8)
             return str(getattr(resp, "completion_text", "") or "")
+        except TypeError:
+            try:
+                resp = await provider.text_chat(prompt=prompt)
+                return str(getattr(resp, "completion_text", "") or "")
+            except Exception:
+                return ""
         except Exception:
             return ""
 
@@ -2267,12 +2265,8 @@ class LLMRequestPipeline:
             _fallback_direct_send(best_key, reason, mood),
             name="life_sim_outreach_fallback",
         )
-        p._background_tasks.append(task)
-        task.add_done_callback(
-            lambda t: (
-                p._background_tasks.remove(t) if t in p._background_tasks else None
-            )
-        )
+        p._background_tasks.add(task)
+        task.add_done_callback(lambda t: p._background_tasks.discard(t))
 
     async def _generate_outreach_message(self, reason: str, mood: str) -> str:
         """使用 LLM 生成角色内的主动联系消息。
