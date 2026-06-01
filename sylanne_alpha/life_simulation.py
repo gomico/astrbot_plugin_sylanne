@@ -142,10 +142,12 @@ LIFE_SIMULATION_PROMPT = """你是一个创意写作助手。请为以下虚构�
 {persona_desc}
 
 当前环境：
-- 时间：{time_desc}
-- 角色情绪倾向：{emotion_desc}
-- 距离上次和朋友聊天：{last_chat_desc}
-- 最近在做：{recent_activity}
+|- 时间：{time_desc}
+|- 时段：{time_of_day} — 此时模拟角色可能在做什么通常是合理的
+|- 角色情绪倾向：{emotion_desc}
+|- 距离上次和朋友聊天：{last_chat_desc}
+|- 最近在做：{recent_activity}
+|- 此时是否适合找朋友聊天：{sociable}
 
 请根据角色设定，生成这个角色此刻可能在做什么、想什么。内容要符合角色的性格和习惯。
 用 JSON 格式输出：
@@ -207,6 +209,38 @@ class LifeSimulator:
             ),
         )
 
+    @property
+    def _current_hour_allowed(self) -> bool:
+        """根据当前时间和配置判断是否在允许时段内。"""
+        import datetime
+        now_hour = datetime.datetime.now().hour
+        start = max(0, min(23, int(
+            self._config.get("sylanne_alpha_life_simulation_start_hour", 9)
+        )))
+        end = max(0, min(23, int(
+            self._config.get("sylanne_alpha_life_simulation_end_hour", 22)
+        )))
+        if start <= end:
+            return start <= now_hour <= end
+        # 跨天配置：start > end 表示允许时段跨越午夜
+        return now_hour >= start or now_hour <= end
+
+    @staticmethod
+    def _time_of_day(dt) -> str:
+        """返回当前时间段的自然语言描述。"""
+        h = dt.hour
+        if 5 <= h < 8:
+            return "清晨"
+        if 8 <= h < 12:
+            return "上午"
+        if 12 <= h < 14:
+            return "中午"
+        if 14 <= h < 18:
+            return "下午"
+        if 18 <= h < 22:
+            return "晚上"
+        return "深夜/凌晨"
+
     def configure(
         self,
         llm_caller: Callable[..., Awaitable[str]] | None = None,
@@ -243,11 +277,18 @@ class LifeSimulator:
             self._task = None
 
     async def _loop(self):
-        """后台循环：以随机间隔模拟生活事件。"""
+        """后台循环：以随机间隔模拟生活事件。注意静默时段。"""
         import random
 
         while self._running and self.enabled:
             try:
+                # 时段跳过：不在允许时段时等待 30 分钟再检
+                if not self._current_hour_allowed:
+                    await asyncio.sleep(1800)
+                    continue
+
+                # TODO: 锁定等待（待 plan-life-sim-tools.md Tool 2 实现后补充）
+
                 base = self.interval_seconds
                 jitter = random.uniform(0.4, 1.8)
                 wait = base * jitter
@@ -300,6 +341,10 @@ class LifeSimulator:
                 if random.random() < share_tendency * 0.5:
                     event.wants_to_share = True
 
+            # 静默时段：事件仍生成并记录，但不触发 outreach
+            if not self._current_hour_allowed:
+                event.wants_to_share = False
+
             if event.wants_to_share and self._should_outreach(now):
                 await self._do_outreach(event, now)
 
@@ -309,6 +354,8 @@ class LifeSimulator:
 
         dt = datetime.datetime.fromtimestamp(now)
         time_desc = dt.strftime("%H:%M, %A")
+        time_of_day = self._time_of_day(dt)
+        sociable = "是" if self._current_hour_allowed else "否（静默时段）"
 
         emotion_desc = "neutral"
         if self._emotion_getter:
@@ -361,9 +408,11 @@ class LifeSimulator:
             LIFE_SIMULATION_PROMPT.format(
                 persona_desc=persona_desc,
                 time_desc=time_desc,
+                time_of_day=time_of_day,
                 emotion_desc=emotion_desc,
                 last_chat_desc=last_chat_desc,
                 recent_activity=recent,
+                sociable=sociable,
             )
             + memory_summary
         )
@@ -437,7 +486,9 @@ class LifeSimulator:
         self.state._pending_emotion_delta = delta
 
     def _should_outreach(self, now: float) -> bool:
-        """检查是否允许主动联系（冷却期、回调是否存在）。"""
+        """检查是否允许主动联系（时段、冷却期、回调）。"""
+        if not self._current_hour_allowed:
+            return False
         if not self._outreach_callback:
             return False
         if self.state.last_outreach_time > 0:

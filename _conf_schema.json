@@ -151,6 +151,18 @@
     "default": 3600.0,
     "hint": "因为生活事件主动找用户的最短间隔。默认 1 小时。"
   },
+  "sylanne_alpha_life_simulation_start_hour": {
+    "description": "生活模拟允许时段（起始小时）",
+    "type": "int",
+    "default": 9,
+    "hint": "0-23，默认 9 点开始。若起始 > 结束则为跨天配置（如 21-6 表示仅夜间允许）"
+  },
+  "sylanne_alpha_life_simulation_end_hour": {
+    "description": "生活模拟允许时段（结束小时）",
+    "type": "int",
+    "default": 22,
+    "hint": "0-23，默认 22 点结束"
+  },
   "sylanne_alpha_auto_detect_group_context": {
     "description": "自动检测 AstrBot 群聊上下文感知",
     "type": "bool",

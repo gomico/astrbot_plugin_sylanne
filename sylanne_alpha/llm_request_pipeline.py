@@ -2296,8 +2296,25 @@ class LLMRequestPipeline:
         provider = context.get_provider_by_id(provider_id)
         if provider is None:
             return ""
+
+        # --- 时间上下文 ---
+        import datetime
+        now = datetime.datetime.now()
+        hour = now.hour
+        if 6 <= hour < 12:
+            time_context = f"现在是上午 {now.strftime('%H:%M')}，"
+        elif 12 <= hour < 14:
+            time_context = f"现在是中午 {now.strftime('%H:%M')}，"
+        elif 14 <= hour < 18:
+            time_context = f"现在是下午 {now.strftime('%H:%M')}，"
+        elif 18 <= hour < 22:
+            time_context = f"现在是晚上 {now.strftime('%H:%M')}，"
+        else:
+            time_context = f"现在是深夜 {now.strftime('%H:%M')}，"
+
         prompt = (
             f"你是 Sylanne，一个有自己生活的角色。你刚刚经历了一件事想和朋友分享。\n"
+            f"{time_context}\n"
             f"事件：{reason}\n心情：{mood}\n"
             f"请用你自然的语气写一条简短的消息给朋友（不要解释你是AI，不要用括号标注心情）。"
             f"直接输出消息内容，不要加任何前缀。"
