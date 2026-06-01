@@ -497,6 +497,24 @@ class LLMRequestPipeline:
 
         return ""
 
+    def _life_sim_conversation_context(self) -> str:
+        """获取最近对话摘要供生活模拟 prompt 注入。"""
+        p = self._p
+        for sk in getattr(p, "_session_origins", {}):
+            buf = p._conversation_buffers.get(sk)
+            if buf:
+                msgs = getattr(buf, "messages", []) or []
+                if msgs:
+                    recent = msgs[-5:]
+                    lines = []
+                    for m in recent:
+                        role = getattr(m, "role", "?")
+                        text = str(getattr(m, "content", "") or "")[:80]
+                        if text.strip():
+                            lines.append(f"[{role}] {text}")
+                    return "\n".join(lines) if lines else ""
+        return ""
+
     # ------------------------------------------------------------------
     # 非文本消息转述（图片/语音/文件 → 文本描述）
     # ------------------------------------------------------------------
@@ -1425,12 +1443,16 @@ class LLMRequestPipeline:
             p._life_simulator_started = True
             life_sim = getattr(p, "_life_simulator", None)
             if life_sim is not None:
+                # 恢复持久化状态（包括可能未到期的锁）
+                await p._load_life_simulation_state()
                 life_sim.configure(
                     llm_caller=self._life_sim_llm_call,
                     outreach_callback=self._life_sim_outreach,
                     emotion_getter=self._life_sim_emotion,
                     body_delta_callback=self._life_sim_body_delta,
                     persona_getter=self._life_sim_persona_getter,
+                    persist_callback=p._save_life_simulation_state,
+                    conversation_context_getter=self._life_sim_conversation_context,
                 )
                 life_sim.start()
                 p.logger.info(

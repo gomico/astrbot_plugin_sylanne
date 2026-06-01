@@ -792,6 +792,8 @@ class LLMResponsePipeline:
             "get_bot_humanlike",
             "get_bot_lifelike",
             "get_bot_personality",
+            "query_life_schedule",
+            "lock_life_schedule",
         )
 
         def _is_sylanne_tool(name: str) -> bool:

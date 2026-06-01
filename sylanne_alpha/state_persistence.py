@@ -200,6 +200,25 @@ class StatePersistence:
         return f"sylanne_memory_state:{safe}"
 
     # ------------------------------------------------------------------
+    # 生命模拟状态持久化（全局单例，无 session_key）
+    # ------------------------------------------------------------------
+
+    LIFE_SIM_KV_KEY = "sylanne_life_simulation"
+
+    async def save_life_simulation_state(self, state_dict: dict) -> None:
+        """保存生命模拟状态到 KV 存储（全局单例）。"""
+        put_fn = getattr(self._p, "put_kv_data", None)
+        if put_fn and callable(put_fn):
+            await put_fn(self.LIFE_SIM_KV_KEY, state_dict)
+
+    async def load_life_simulation_state(self) -> dict | None:
+        """加载生命模拟状态（全局单例）。返回 None 表示无已存储数据。"""
+        get_fn = getattr(self._p, "get_kv_data", None)
+        if get_fn and callable(get_fn):
+            return await get_fn(self.LIFE_SIM_KV_KEY, None)
+        return None
+
+    # ------------------------------------------------------------------
     # 内部辅助方法
     # ------------------------------------------------------------------
 

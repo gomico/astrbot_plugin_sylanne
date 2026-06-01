@@ -87,6 +87,8 @@ class LifeSimulationState:
     simulation_count: int = 0  # 总模拟次数
     outreach_count: int = 0  # 总主动联系次数
     enabled: bool = False  # 是否启用
+    locked_until: float = 0.0  # 锁定到期时间戳（0 = 未锁定）
+    locked_activity: str = ""  # 锁定期间的活动描述
     _pending_emotion_delta: dict = field(default_factory=dict)  # 待应用的情绪增量
 
     def to_dict(self) -> dict[str, Any]:
@@ -108,6 +110,8 @@ class LifeSimulationState:
             "last_outreach_time": self.last_outreach_time,
             "simulation_count": self.simulation_count,
             "outreach_count": self.outreach_count,
+            "locked_until": self.locked_until,
+            "locked_activity": self.locked_activity,
         }
 
     @classmethod
@@ -119,6 +123,13 @@ class LifeSimulationState:
         state.last_outreach_time = data.get("last_outreach_time", 0.0)
         state.simulation_count = data.get("simulation_count", 0)
         state.outreach_count = data.get("outreach_count", 0)
+        state.locked_until = data.get("locked_until", 0.0)
+        state.locked_activity = data.get("locked_activity", "")
+        # 加载后清除已过期的锁
+        import time as _time
+        if state.locked_until > 0 and _time.time() >= state.locked_until:
+            state.locked_until = 0.0
+            state.locked_activity = ""
         for e in data.get("events", []):
             state.events.append(
                 LifeEvent(
@@ -151,7 +162,8 @@ LIFE_SIMULATION_PROMPT = """你是一个创意写作助手。请为以下虚构�
 
 请根据角色设定，生成这个角色此刻可能在做什么、想什么。内容要符合角色的性格和习惯。
 用 JSON 格式输出：
-{{"activity": "正在做什么（简短）", "thought": "在想什么（简短）", "mood": "当前心情（一个词）", "wants_to_share": true/false, "share_reason": "如果想分享给朋友，原因（简短）", "urgency": 0.0-1.0}}"""
+{{"activity": "正在做什么（简短）", "thought": "在想什么（简短）", "mood": "当前心情（一个词）", "wants_to_share": true/false, "share_reason": "如果想分享给朋友，原因（简短）", "urgency": 0.0-1.0}}
+{conversation_context}"""
 
 
 class LifeSimulator:
@@ -249,6 +261,8 @@ class LifeSimulator:
         persona_getter: Callable[[], str] | None = None,
         memory_summary_getter: Callable[[], str] | None = None,
         body_delta_callback: Callable[[dict[str, float]], None] | None = None,
+        persist_callback: Callable[[], None] | None = None,
+        conversation_context_getter: Callable[[], str] | None = None,
     ):
         """注入外部依赖。所有回调都是可选的。"""
         self._llm_caller = llm_caller
@@ -257,6 +271,8 @@ class LifeSimulator:
         self._persona_getter = persona_getter
         self._memory_summary_getter = memory_summary_getter
         self._body_delta_callback = body_delta_callback
+        self._persist_callback = persist_callback
+        self._conversation_context_getter = conversation_context_getter
 
     def start(self):
         """启动后台模拟循环。"""
@@ -287,7 +303,19 @@ class LifeSimulator:
                     await asyncio.sleep(1800)
                     continue
 
-                # TODO: 锁定等待（待 plan-life-sim-tools.md Tool 2 实现后补充）
+                # 锁定等待：锁定期间不生成新事件
+                if time.time() < self.state.locked_until:
+                    remaining = self.state.locked_until - time.time()
+                    await asyncio.sleep(min(30, remaining))
+                    if time.time() >= self.state.locked_until:
+                        await self._simulate_tick()
+                        # 锁定到期恢复后持久化
+                        if self._persist_callback:
+                            try:
+                                self._persist_callback()
+                            except Exception:
+                                pass
+                    continue
 
                 base = self.interval_seconds
                 jitter = random.uniform(0.4, 1.8)
@@ -348,6 +376,13 @@ class LifeSimulator:
             if event.wants_to_share and self._should_outreach(now):
                 await self._do_outreach(event, now)
 
+            # 每次 tick 完成后持久化
+            if self._persist_callback:
+                try:
+                    self._persist_callback()
+                except Exception:
+                    pass
+
     def _build_prompt(self, now: float) -> str:
         """构建 LLM 提示词，包含角色设定、时间、情绪、记忆等上下文。"""
         import datetime
@@ -404,6 +439,15 @@ class LifeSimulator:
             except Exception:
                 pass
 
+        conversation_context = ""
+        if self._conversation_context_getter:
+            try:
+                ctx = self._conversation_context_getter()
+                if ctx:
+                    conversation_context = f"\n最近对话上下文：\n{ctx[:500]}"
+            except Exception:
+                pass
+
         return (
             LIFE_SIMULATION_PROMPT.format(
                 persona_desc=persona_desc,
@@ -413,6 +457,7 @@ class LifeSimulator:
                 last_chat_desc=last_chat_desc,
                 recent_activity=recent,
                 sociable=sociable,
+                conversation_context=conversation_context,
             )
             + memory_summary
         )
@@ -516,6 +561,10 @@ class LifeSimulator:
 
     def recent_context_for_prompt(self, limit: int = 3) -> str:
         """获取近期生活事件作为 LLM 提示词注入的上下文。"""
+        # 锁定期间优先返回锁定活动
+        if self.state.locked_until > 0 and time.time() < self.state.locked_until:
+            if self.state.locked_activity:
+                return f"（Sylanne 正在：{self.state.locked_activity}）"
         recent = [e for e in self.state.events[-10:] if e.text]
         if not recent:
             return ""

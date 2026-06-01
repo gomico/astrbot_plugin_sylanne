@@ -2281,3 +2281,34 @@ class EmotionalStatePlugin(Star):
     async def _llm_tool_query_agent_state(self, event: Any) -> Any:
         """查询 Sylanne 当前情感状态和计算脊柱摘要。"""
         return await self._public_api._llm_tool_query_agent_state(event)
+
+    # ------------------------------------------------------------------
+    # 生命模拟持久化封装
+    # ------------------------------------------------------------------
+
+    async def _save_life_simulation_state(self) -> None:
+        """持久化封装：将 LifeSimulator 状态保存到 KV 存储。"""
+        state_dict = self._life_simulator.to_dict()
+        await self._state_persistence.save_life_simulation_state(state_dict)
+
+    async def _load_life_simulation_state(self) -> None:
+        """持久化封装：从 KV 存储恢复 LifeSimulator 状态。"""
+        data = await self._state_persistence.load_life_simulation_state()
+        if data:
+            self._life_simulator.from_dict(data)
+
+    # LLM Tool: query_life_schedule
+    @filter.llm_tool(name="query_life_schedule")
+    async def _llm_tool_query_life_schedule(self, event: Any) -> Any:
+        """查询 Sylanne 最近的生活模拟日程。"""
+        return await self._public_api._llm_tool_query_life_schedule(event)
+
+    # LLM Tool: lock_life_schedule
+    @filter.llm_tool(name="lock_life_schedule")
+    async def _llm_tool_lock_life_schedule(
+        self, event: Any, description: str = "", duration_minutes: int = 30
+    ) -> Any:
+        """安排一段固定活动，锁定后台生活模拟。"""
+        return await self._public_api._llm_tool_lock_life_schedule(
+            event, description=description, duration_minutes=duration_minutes
+        )

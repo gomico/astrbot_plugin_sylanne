@@ -970,6 +970,102 @@ class PublicAPI:
         return event.plain_result(result) if hasattr(event, "plain_result") else result
 
     # ------------------------------------------------------------------
+    # LLM Tool: query_life_schedule（Tool 1）
+    # ------------------------------------------------------------------
+
+    async def _llm_tool_query_life_schedule(self, event: Any) -> Any:
+        """查询 Sylanne 最近的生活模拟日程（只读）。"""
+        p = self._p
+        life_sim = getattr(p, "_life_simulator", None)
+        if not life_sim:
+            return event.plain_result("{}") if hasattr(event, "plain_result") else "{}"
+        events = []
+        for e in life_sim.state.events[-10:]:
+            events.append({
+                "activity": e.text,
+                "mood": e.mood,
+                "time": e.timestamp,
+                "shared": e.shared,
+            })
+        current = life_sim.state.current_activity
+        # 如果当前被锁定，优先返回锁定活动
+        if life_sim.state.locked_until > 0 and time.time() < life_sim.state.locked_until:
+            current = life_sim.state.locked_activity or current
+        payload = {
+            "current_activity": current,
+            "recent_events": events,
+            "outreach_count": life_sim.state.outreach_count,
+        }
+        max_chars = p._cfg_int("llm_tool_response_max_chars", 16000)
+        result = json.dumps(payload, ensure_ascii=False, default=str)
+        if len(result) > max_chars:
+            result = result[: max_chars - 50] + "\n[sylanne_tool_response_trimmed]"
+        return event.plain_result(result) if hasattr(event, "plain_result") else result
+
+    # ------------------------------------------------------------------
+    # LLM Tool: lock_life_schedule（Tool 2）
+    # ------------------------------------------------------------------
+
+    async def _llm_tool_lock_life_schedule(
+        self, event: Any, description: str = "", duration_minutes: int = 30
+    ) -> Any:
+        """安排一段固定活动，锁定生活模拟后台。
+
+        Args:
+            description: 活动描述（如「在厨房做咖喱」）。
+            duration_minutes: 持续分钟数（必须 >= 1）。
+        """
+        p = self._p
+        life_sim = getattr(p, "_life_simulator", None)
+        if not life_sim:
+            return event.plain_result("{}") if hasattr(event, "plain_result") else "{}"
+
+        # 参数校验
+        try:
+            duration_minutes = int(duration_minutes)
+        except (TypeError, ValueError):
+            return (
+                event.plain_result(json.dumps({"error": "duration_minutes 必须为整数"}))
+                if hasattr(event, "plain_result")
+                else "{}"
+            )
+        if duration_minutes < 1:
+            return (
+                event.plain_result(json.dumps({"error": "duration_minutes 必须 >= 1"}))
+                if hasattr(event, "plain_result")
+                else "{}"
+            )
+
+        description = str(description or "").strip()
+        if not description:
+            return (
+                event.plain_result(json.dumps({"error": "description 不能为空"}))
+                if hasattr(event, "plain_result")
+                else "{}"
+            )
+
+        locked_until = time.time() + duration_minutes * 60
+
+        life_sim.state.locked_until = locked_until
+        life_sim.state.locked_activity = description
+        life_sim.state.current_activity = description
+
+        # Tool 2 写入锁定后必须同步持久化
+        if life_sim._persist_callback:
+            try:
+                life_sim._persist_callback()
+            except Exception:
+                pass
+
+        payload = {
+            "locked_until": locked_until,
+            "locked_activity": description,
+            "duration_minutes": duration_minutes,
+        }
+        result = json.dumps(payload, ensure_ascii=False, default=str)
+        return event.plain_result(result) if hasattr(event, "plain_result") else result
+
+    # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
     async def sylanne_memory_status(
