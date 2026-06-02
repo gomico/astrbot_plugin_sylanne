@@ -2305,8 +2305,8 @@ class EmotionalStatePlugin(Star):
         """查询 Sylanne 最近的生活模拟日程。
 
         Args:
-            limit: 最多返回 N 条记录（0=不限制条数）。
-            since_minutes: 可选，只返回最近 N 分钟内的记录（0=不限时间）。
+            limit(int): 最多返回 N 条记录（0=不限制条数）。
+            since_minutes(int): 可选，只返回最近 N 分钟内的记录（0=不限时间）。
                 例如"最近一小时"=60，"下午"=240，直接填整数即可。
         """
         return await self._public_api._llm_tool_query_life_schedule(
@@ -2318,7 +2318,32 @@ class EmotionalStatePlugin(Star):
     async def _llm_tool_lock_life_schedule(
         self, event: Any, description: str = "", duration_minutes: int = 30
     ) -> Any:
-        """安排一段固定活动，锁定后台生活模拟。"""
+        """安排一段固定活动，锁定后台生活模拟。
+
+        Args:
+            description(str): 活动描述。
+            duration_minutes(int): 锁定持续时间（分钟）。
+        """
         return await self._public_api._llm_tool_lock_life_schedule(
             event, description=description, duration_minutes=duration_minutes
+        )
+
+    # LLM Tool: query_daily_schedule
+    @filter.llm_tool(name="query_daily_schedule")
+    async def _llm_tool_query_daily_schedule(self, event: Any) -> Any:
+        """查询今日日程框架（活动 + 穿搭）。"""
+        return await self._public_api._llm_tool_query_daily_schedule(event)
+
+    # LLM Tool: query_daily_schedule_history
+    @filter.llm_tool(name="query_daily_schedule_history")
+    async def _llm_tool_query_daily_schedule_history(
+        self, event: Any, days: int = 3
+    ) -> Any:
+        """查询最近 N 天的日程历史。
+
+        Args:
+            days(int): 查询天数（默认 3 天）。
+        """
+        return await self._public_api._llm_tool_query_daily_schedule_history(
+            event, days=days
         )

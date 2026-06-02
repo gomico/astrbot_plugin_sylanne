@@ -921,7 +921,7 @@ class LLMRequestPipeline:
         )
 
         # Step 5: 组装最终 prompt
-        self._assemble_final_prompt(
+        await self._assemble_final_prompt(
             request=request,
             session_key=session_key,
             budget=budget,
@@ -1313,7 +1313,7 @@ class LLMRequestPipeline:
     # _assemble_final_prompt
     # ------------------------------------------------------------------
 
-    def _assemble_final_prompt(
+    async def _assemble_final_prompt(
         self,
         *,
         request: Any,
@@ -1454,6 +1454,24 @@ class LLMRequestPipeline:
                     persist_callback=p._save_life_simulation_state,
                     conversation_context_getter=self._life_sim_conversation_context,
                 )
+
+                # 启动懒加载：检查今日日程框架是否需要立即生成
+                if life_sim.enabled and life_sim._config.get(
+                    "sylanne_alpha_life_simulation_daily_schedule_enabled", False
+                ):
+                    import datetime as _dt
+                    today = _dt.datetime.now().strftime("%Y-%m-%d")
+                    schedule = getattr(life_sim.state, "daily_schedule", None)
+                    if not schedule or schedule.date != today:
+                        schedule_hour = int(life_sim._config.get(
+                            "sylanne_alpha_life_simulation_daily_schedule_hour", 6
+                        ))
+                        if _dt.datetime.now().hour >= schedule_hour:
+                            try:
+                                await life_sim._generate_daily_schedule()
+                            except Exception:
+                                pass
+
                 life_sim.start()
                 p.logger.info(
                     f"Sylanne life simulator: enabled={life_sim.enabled}, "
@@ -2276,6 +2294,25 @@ class LLMRequestPipeline:
                         return
                     try:
                         await context.send_message(origin, message)
+                        # 回退直接发送后，同步写入对话 buffer 以便后续对话感知
+                        try:
+                            from sylanne_alpha.memory_system import ConversationBuffer
+                            message_text = generated if generated else f"[{m}] {r}"
+                            buf = p._conversation_buffers.setdefault(
+                                session_key, ConversationBuffer(session_key=session_key)
+                            )
+                            buf.append("bot", message_text)
+                            p._last_bot_texts[session_key] = message_text[:120]
+                            p._schedule_buffer_persist(session_key)
+                            if hasattr(p, "_sync_message_to_conv_mgr"):
+                                safe_ensure_future(
+                                    p._sync_message_to_conv_mgr(session_key, "bot", message_text),
+                                    name="conv_mgr_sync_outreach",
+                                )
+                        except Exception as buf_err:
+                            logger.debug(
+                                f"Sylanne life_sim_outreach buf.append: {buf_err}"
+                            )
                     except Exception as e:
                         logger.warning(
                             f"Sylanne life_sim_outreach send: {e}", exc_info=True

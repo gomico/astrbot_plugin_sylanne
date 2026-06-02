@@ -206,5 +206,47 @@
     "default": "",
     "_special": "select_provider",
     "hint": "指定用于转述的多模态 LLM provider；留空则自动检测已配置的多模态 provider。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_enabled": {
+    "description": "启用每日日程框架 + 多时段穿搭生成",
+    "type": "bool",
+    "default": false,
+    "hint": "默认关闭；开启后每天清晨自动生成上午/下午/晚上三段日程框架（含穿搭），生活模拟的随机事件以框架为上下文生成。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_hour": {
+    "description": "每日生成日程框架的小时阈值 (0-23)",
+    "type": "int",
+    "default": 6,
+    "hint": "当日程启用时，当天首次 tick 时间 ≥ 此小时即触发生成。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_history_days": {
+    "description": "保留最近 N 天的日程历史",
+    "type": "int",
+    "default": 7,
+    "hint": "用于避免重复和 LLM 上下文参考。0 = 不保留历史。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_weather_enabled": {
+    "description": "生成日程框架时查询实时天气",
+    "type": "bool",
+    "default": true,
+    "hint": "通过 Open-Meteo API 查询（免费、无需 key）。关闭后使用季节描述作为天气。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_weather_lat": {
+    "description": "天气查询纬度",
+    "type": "float",
+    "default": 0.0,
+    "hint": "直接输入数值，不做地名反查。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_weather_lon": {
+    "description": "天气查询经度",
+    "type": "float",
+    "default": 0.0,
+    "hint": "直接输入数值，不做地名反查。"
+  },
+  "sylanne_alpha_life_simulation_daily_schedule_deep_night_hour": {
+    "description": "深夜起始小时",
+    "type": "int",
+    "default": 22,
+    "hint": "0-23，此小时之后视为深夜时段，不排日程（返回固定休息上下文）。默认 22 点起。"
   }
 }

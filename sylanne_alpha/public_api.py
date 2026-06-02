@@ -1083,6 +1083,109 @@ class PublicAPI:
         return event.plain_result(result) if hasattr(event, "plain_result") else result
 
     # ------------------------------------------------------------------
+    # LLM Tool: query_daily_schedule
+    # ------------------------------------------------------------------
+
+    async def _llm_tool_query_daily_schedule(self, event: Any) -> Any:
+        """查询今日日程框架：活动 + 穿搭。
+
+        返回今日上午/下午/晚上三个时段的活动安排和穿搭描述。
+        无参数，直接返回当前日期和完整的日程框架。
+        """
+        p = self._p
+        life_sim = getattr(p, "_life_simulator", None)
+        if not life_sim:
+            return event.plain_result("{}") if hasattr(event, "plain_result") else "{}"
+
+        schedule = life_sim.state.daily_schedule
+        if schedule is None:
+            return (
+                event.plain_result(json.dumps({"error": "今日日程框架尚未生成"}))
+                if hasattr(event, "plain_result")
+                else "{}"
+            )
+
+        payload = {
+            "date": schedule.date,
+            "weather": schedule.weather_desc,
+            "morning": {
+                "activity": schedule.morning_activity,
+                "outfit": schedule.morning_outfit,
+                "outfit_style": schedule.morning_outfit_style,
+            },
+            "afternoon": {
+                "activity": schedule.afternoon_activity,
+                "outfit": schedule.afternoon_outfit,
+                "outfit_style": schedule.afternoon_outfit_style,
+            },
+            "evening": {
+                "activity": schedule.evening_activity,
+                "outfit": schedule.evening_outfit,
+                "outfit_style": schedule.evening_outfit_style,
+            },
+        }
+        result = json.dumps(payload, ensure_ascii=False)
+        max_chars = p._cfg_int("llm_tool_response_max_chars", 16000)
+        if len(result) > max_chars:
+            result = result[: max_chars - 50] + "\n[sylanne_tool_response_trimmed]"
+        return event.plain_result(result) if hasattr(event, "plain_result") else result
+
+    # ------------------------------------------------------------------
+    # LLM Tool: query_daily_schedule_history
+    # ------------------------------------------------------------------
+
+    async def _llm_tool_query_daily_schedule_history(
+        self, event: Any, days: int = 3
+    ) -> Any:
+        """查询最近 N 天的日程历史。
+
+        Args:
+            days: 查询最近 N 天的历史日程（默认 3 天，最多不超过配置的 history_days）。
+        """
+        p = self._p
+        life_sim = getattr(p, "_life_simulator", None)
+        if not life_sim:
+            return event.plain_result("{}") if hasattr(event, "plain_result") else "{}"
+
+        # 限制 days 不超过历史保留天数
+        max_hist = int(
+            p.config.get(
+                "sylanne_alpha_life_simulation_daily_schedule_history_days", 7
+            )
+        )
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            days = 3
+        days = max(1, min(days, max_hist))
+
+        history = life_sim.state.daily_schedule_history[:days]
+        if not history:
+            return (
+                event.plain_result(json.dumps({"error": "无历史日程记录"}))
+                if hasattr(event, "plain_result")
+                else "{}"
+            )
+
+        entries = []
+        for s in history:
+            entries.append({
+                "date": s.date,
+                "weather": s.weather_desc,
+                "morning": s.morning_activity,
+                "afternoon": s.afternoon_activity,
+                "evening": s.evening_activity,
+            })
+
+        result = json.dumps(
+            {"days": days, "entries": entries}, ensure_ascii=False
+        )
+        max_chars = p._cfg_int("llm_tool_response_max_chars", 16000)
+        if len(result) > max_chars:
+            result = result[: max_chars - 50] + "\n[sylanne_tool_response_trimmed]"
+        return event.plain_result(result) if hasattr(event, "plain_result") else result
+
+    # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
     async def sylanne_memory_status(
