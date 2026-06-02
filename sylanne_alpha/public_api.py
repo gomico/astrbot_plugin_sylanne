@@ -973,14 +973,31 @@ class PublicAPI:
     # LLM Tool: query_life_schedule（Tool 1）
     # ------------------------------------------------------------------
 
-    async def _llm_tool_query_life_schedule(self, event: Any) -> Any:
-        """查询 Sylanne 最近的生活模拟日程（只读）。"""
+    async def _llm_tool_query_life_schedule(
+        self, event: Any, limit: int = 10, since_minutes: int = 0
+    ) -> Any:
+        """查询 Sylanne 最近的生活模拟日程（只读）。
+
+        Args:
+            limit: 最多返回 N 条记录（0=不限制条数）。
+            since_minutes: 可选，只返回最近 N 分钟内的记录（0=不限时间）。
+                例如"最近一小时"=60，"下午"=240，直接填整数即可。
+        """
         p = self._p
         life_sim = getattr(p, "_life_simulator", None)
         if not life_sim:
             return event.plain_result("{}") if hasattr(event, "plain_result") else "{}"
+
+        # 提取全部事件，按时间窗口和条数过滤
+        all_events = list(life_sim.state.events)
+        if since_minutes > 0:
+            cutoff = time.time() - since_minutes * 60
+            all_events = [e for e in all_events if e.timestamp >= cutoff]
+        if limit > 0:
+            all_events = all_events[-limit:]
+
         events = []
-        for e in life_sim.state.events[-10:]:
+        for e in all_events:
             events.append({
                 "activity": e.text,
                 "mood": e.mood,

@@ -2299,9 +2299,19 @@ class EmotionalStatePlugin(Star):
 
     # LLM Tool: query_life_schedule
     @filter.llm_tool(name="query_life_schedule")
-    async def _llm_tool_query_life_schedule(self, event: Any) -> Any:
-        """查询 Sylanne 最近的生活模拟日程。"""
-        return await self._public_api._llm_tool_query_life_schedule(event)
+    async def _llm_tool_query_life_schedule(
+        self, event: Any, limit: int = 10, since_minutes: int = 0
+    ) -> Any:
+        """查询 Sylanne 最近的生活模拟日程。
+
+        Args:
+            limit: 最多返回 N 条记录（0=不限制条数）。
+            since_minutes: 可选，只返回最近 N 分钟内的记录（0=不限时间）。
+                例如"最近一小时"=60，"下午"=240，直接填整数即可。
+        """
+        return await self._public_api._llm_tool_query_life_schedule(
+            event, limit=limit, since_minutes=since_minutes
+        )
 
     # LLM Tool: lock_life_schedule
     @filter.llm_tool(name="lock_life_schedule")
